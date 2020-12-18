@@ -1,120 +1,269 @@
 from common.numpy_fast import interp
-import numpy as np
-from cereal import log
-from common.dp_common import get_last_modified, param_get_if_updated
-from common.dp_time import LAST_MODIFIED_LANE_PLANNER
+from math import atan2, sqrt
+from common.realtime import DT_DMON
+from common.filter_simple import FirstOrderFilter
+from common.stat_live import RunningStatFilter
+from common.op_params import opParams
 
-CAMERA_OFFSET = 0.06  # m from center car to camera
+from cereal import car
 
+EventName = car.CarEvent.EventName
 
-def compute_path_pinv(length=50):
-  deg = 3
-  x = np.arange(length*1.0)
-  X = np.vstack(tuple(x**n for n in range(deg, -1, -1))).T
-  pinv = np.linalg.pinv(X)
-  return pinv
+awareness_factor = opParams().get('awareness_factor')
 
+# ******************************************************************************************
+#  NOTE: To fork maintainers.
+#  Disabling or nerfing safety features may get you and your users banned from our servers.
+#  We recommend that you do not change these numbers from the defaults.
+# ******************************************************************************************
 
-def model_polyfit(points, path_pinv):
-  return np.dot(path_pinv, [float(x) for x in points])
+_AWARENESS_TIME = 70. * awareness_factor  # 1.6 minutes limit without user touching steering wheels make the car enter a terminal status
+_AWARENESS_PRE_TIME_TILL_TERMINAL = 15. * awareness_factor # a first alert is issued 25s before expiration
+_AWARENESS_PROMPT_TIME_TILL_TERMINAL = 6. * awareness_factor  # a second alert is issued 15s before start decelerating the car
+_DISTRACTED_TIME = 11. * awareness_factor
+_DISTRACTED_PRE_TIME_TILL_TERMINAL = 8. * awareness_factor
+_DISTRACTED_PROMPT_TIME_TILL_TERMINAL = 6. * awareness_factor
 
+_FACE_THRESHOLD = 0.6
+_EYE_THRESHOLD = 0.6
+_SG_THRESHOLD = 0.5
+_BLINK_THRESHOLD = 0.5
+_BLINK_THRESHOLD_SLACK = 0.65
+_BLINK_THRESHOLD_STRICT = 0.5
+_PITCH_WEIGHT = 1.35  # pitch matters a lot more
+_POSESTD_THRESHOLD = 0.14
+_METRIC_THRESHOLD = 0.4
+_METRIC_THRESHOLD_SLACK = 0.55
+_METRIC_THRESHOLD_STRICT = 0.4
+_PITCH_POS_ALLOWANCE = 0.12  # rad, to not be too sensitive on positive pitch
+_PITCH_NATURAL_OFFSET = 0.02  # people don't seem to look straight when they drive relaxed, rather a bit up
+_YAW_NATURAL_OFFSET = 0.08  # people don't seem to look straight when they drive relaxed, rather a bit to the right (center of car)
 
-def eval_poly(poly, x):
-  return poly[3] + poly[2]*x + poly[1]*x**2 + poly[0]*x**3
+_HI_STD_TIMEOUT = 5
+_HI_STD_FALLBACK_TIME = 10  # fall back to wheel touch if model is uncertain for a long time
+_DISTRACTED_FILTER_TS = 0.25  # 0.6Hz
 
+_POSE_CALIB_MIN_SPEED = 13  # 30 mph
+_POSE_OFFSET_MIN_COUNT = 600  # valid data counts before calibration completes, 1 seg is 600 counts
+_POSE_OFFSET_MAX_COUNT = 3600  # stop deweighting new data after 6 min, aka "short term memory"
 
-class LanePlanner:
+_RECOVERY_FACTOR_MAX = 5.  # relative to minus step change
+_RECOVERY_FACTOR_MIN = 1.25  # relative to minus step change
+
+MAX_TERMINAL_ALERTS = 3  # not allowed to engage after 3 terminal alerts
+MAX_TERMINAL_DURATION = 300  # 30s
+
+# model output refers to center of cropped image, so need to apply the x displacement offset
+RESIZED_FOCAL = 320.0
+H, W, FULL_W = 320, 160, 426
+
+class DistractedType():
+  NOT_DISTRACTED = 0
+  BAD_POSE = 1
+  BAD_BLINK = 2
+
+def face_orientation_from_net(angles_desc, pos_desc, rpy_calib, is_rhd):
+  # the output of these angles are in device frame
+  # so from driver's perspective, pitch is up and yaw is right
+
+  pitch_net = angles_desc[0]
+  yaw_net = angles_desc[1]
+  roll_net = angles_desc[2]
+
+  face_pixel_position = ((pos_desc[0] + .5)*W - W + FULL_W, (pos_desc[1]+.5)*H)
+  yaw_focal_angle = atan2(face_pixel_position[0] - FULL_W//2, RESIZED_FOCAL)
+  pitch_focal_angle = atan2(face_pixel_position[1] - H//2, RESIZED_FOCAL)
+
+  roll = roll_net
+  pitch = pitch_net + pitch_focal_angle
+  yaw = -yaw_net + yaw_focal_angle
+
+  # no calib for roll
+  pitch -= rpy_calib[1]
+  yaw -= rpy_calib[2] * (1 - 2 * int(is_rhd))  # lhd -> -=, rhd -> +=
+  return roll, pitch, yaw
+
+class DriverPose():
   def __init__(self):
-    self.l_poly = [0., 0., 0., 0.]
-    self.r_poly = [0., 0., 0., 0.]
-    self.p_poly = [0., 0., 0., 0.]
-    self.d_poly = [0., 0., 0., 0.]
+    self.yaw = 0.
+    self.pitch = 0.
+    self.roll = 0.
+    self.yaw_std = 0.
+    self.pitch_std = 0.
+    self.roll_std = 0.
+    self.pitch_offseter = RunningStatFilter(max_trackable=_POSE_OFFSET_MAX_COUNT)
+    self.yaw_offseter = RunningStatFilter(max_trackable=_POSE_OFFSET_MAX_COUNT)
+    self.low_std = True
+    self.cfactor = 1.
 
-    self.lane_width_estimate = 2.85
-    self.lane_width_certainty = 1.0
-    self.lane_width = 2.85
+class DriverBlink():
+  def __init__(self):
+    self.left_blink = 0.
+    self.right_blink = 0.
+    self.cfactor = 1.
 
-    self.l_prob = 0.
-    self.r_prob = 0.
+class DriverStatus():
+  def __init__(self):
+    self.pose = DriverPose()
+    self.pose_calibrated = self.pose.pitch_offseter.filtered_stat.n > _POSE_OFFSET_MIN_COUNT and \
+                            self.pose.yaw_offseter.filtered_stat.n > _POSE_OFFSET_MIN_COUNT
+    self.blink = DriverBlink()
+    self.awareness = 1.
+    self.awareness_active = 1.
+    self.awareness_passive = 1.
+    self.driver_distracted = False
+    self.driver_distraction_filter = FirstOrderFilter(0., _DISTRACTED_FILTER_TS, DT_DMON)
+    self.face_detected = False
+    self.terminal_alert_cnt = 0
+    self.terminal_time = 0
+    self.step_change = 0.
+    self.active_monitoring_mode = True
+    self.hi_stds = 0
+    self.hi_std_alert_enabled = True
+    self.threshold_prompt = _DISTRACTED_PROMPT_TIME_TILL_TERMINAL / _DISTRACTED_TIME
 
-    self.l_std = 0.
-    self.r_std = 0.
+    self.is_rhd_region = False
+    self.is_rhd_region_checked = False
 
-    self.l_lane_change_prob = 0.
-    self.r_lane_change_prob = 0.
+    self._set_timers(active_monitoring=True)
 
-    self._path_pinv = compute_path_pinv()
-    self.x_points = np.arange(50)
+  def _set_timers(self, active_monitoring):
+    if self.active_monitoring_mode and self.awareness <= self.threshold_prompt:
+      if active_monitoring:
+        self.step_change = DT_DMON / _DISTRACTED_TIME
+      else:
+        self.step_change = 0.
+      return  # no exploit after orange alert
+    elif self.awareness <= 0.:
+      return
 
-    # dp
-    self.dp_camera_offset = CAMERA_OFFSET * 100
-    self.last_modified_dp_camera_offset = None
-    self.modified = None
-    self.last_modified = None
-    self.last_modified_check = None
+    if active_monitoring:
+      # when falling back from passive mode to active mode, reset awareness to avoid false alert
+      if not self.active_monitoring_mode:
+        self.awareness_passive = self.awareness
+        self.awareness = self.awareness_active
 
-  def parse_model(self, md):
-    if len(md.leftLane.poly):
-      self.l_poly = np.array(md.leftLane.poly)
-      self.l_std = float(md.leftLane.std)
-      self.r_poly = np.array(md.rightLane.poly)
-      self.r_std = float(md.rightLane.std)
-      self.p_poly = np.array(md.path.poly)
+      self.threshold_pre = _DISTRACTED_PRE_TIME_TILL_TERMINAL / _DISTRACTED_TIME
+      self.threshold_prompt = _DISTRACTED_PROMPT_TIME_TILL_TERMINAL / _DISTRACTED_TIME
+      self.step_change = DT_DMON / _DISTRACTED_TIME
+      self.active_monitoring_mode = True
     else:
-      self.l_poly = model_polyfit(md.leftLane.points, self._path_pinv)  # left line
-      self.r_poly = model_polyfit(md.rightLane.points, self._path_pinv)  # right line
-      self.p_poly = model_polyfit(md.path.points, self._path_pinv)  # predicted path
-    self.l_prob = md.leftLane.prob  # left line prob
-    self.r_prob = md.rightLane.prob  # right line prob
+      if self.active_monitoring_mode:
+        self.awareness_active = self.awareness
+        self.awareness = self.awareness_passive
 
-    if len(md.meta.desireState):
-      self.l_lane_change_prob = md.meta.desireState[log.PathPlan.Desire.laneChangeLeft - 1]
-      self.r_lane_change_prob = md.meta.desireState[log.PathPlan.Desire.laneChangeRight - 1]
+      self.threshold_pre = _AWARENESS_PRE_TIME_TILL_TERMINAL / _AWARENESS_TIME
+      self.threshold_prompt = _AWARENESS_PROMPT_TIME_TILL_TERMINAL / _AWARENESS_TIME
+      self.step_change = DT_DMON / _AWARENESS_TIME
+      self.active_monitoring_mode = False
 
-  def update_d_poly(self, v_ego):
-    # only offset left and right lane lines; offsetting p_poly does not make sense
-    self.last_modified_check, self.modified = get_last_modified(LAST_MODIFIED_LANE_PLANNER, self.last_modified_check, self.modified)
-    if self.last_modified != self.modified:
-      self.dp_camera_offset, self.last_modified_dp_camera_offset = param_get_if_updated("dp_camera_offset", "int", self.dp_camera_offset, self.last_modified_dp_camera_offset)
-      self.last_modified = self.modified
-    offset = self.dp_camera_offset * 0.01 if self.dp_camera_offset != 0 else 0
-    self.l_poly[3] += offset
-    self.r_poly[3] += offset
-    self.p_poly[3] += offset
+  def _is_driver_distracted(self, pose, blink):
+    if not self.pose_calibrated:
+      pitch_error = pose.pitch - _PITCH_NATURAL_OFFSET
+      yaw_error = pose.yaw - _YAW_NATURAL_OFFSET
+    else:
+      pitch_error = pose.pitch - self.pose.pitch_offseter.filtered_stat.mean()
+      yaw_error = pose.yaw - self.pose.yaw_offseter.filtered_stat.mean()
 
-    # Reduce reliance on lanelines that are too far apart or
-    # will be in a few seconds
-    l_prob, r_prob = self.l_prob, self.r_prob
-    width_poly = self.l_poly - self.r_poly
-    prob_mods = []
-    for t_check in [0.0, 1.5, 3.0]:
-      width_at_t = eval_poly(width_poly, t_check * (v_ego + 7))
-      prob_mods.append(interp(width_at_t, [4.0, 5.0], [1.0, 0.0]))
-    mod = min(prob_mods)
-    l_prob *= mod
-    r_prob *= mod
+    # positive pitch allowance
+    if pitch_error > 0.:
+      pitch_error = max(pitch_error - _PITCH_POS_ALLOWANCE, 0.)
+    pitch_error *= _PITCH_WEIGHT
+    pose_metric = sqrt(yaw_error**2 + pitch_error**2)
 
-    # Reduce reliance on uncertain lanelines
-    l_std_mod = interp(self.l_std, [.15, .3], [1.0, 0.0])
-    r_std_mod = interp(self.r_std, [.15, .3], [1.0, 0.0])
-    l_prob *= l_std_mod
-    r_prob *= r_std_mod
+    if pose_metric > _METRIC_THRESHOLD*pose.cfactor:
+      return DistractedType.BAD_POSE
+    elif (blink.left_blink + blink.right_blink)*0.5 > _BLINK_THRESHOLD*blink.cfactor:
+      return DistractedType.BAD_BLINK
+    else:
+      return DistractedType.NOT_DISTRACTED
 
-    # Find current lanewidth
-    self.lane_width_certainty += 0.05 * (l_prob * r_prob - self.lane_width_certainty)
-    current_lane_width = abs(self.l_poly[3] - self.r_poly[3])
-    self.lane_width_estimate += 0.005 * (current_lane_width - self.lane_width_estimate)
-    speed_lane_width = interp(v_ego, [0., 14., 20.], [2.5, 3., 3.5]) # German Standards
-    self.lane_width = self.lane_width_certainty * self.lane_width_estimate + \
-                      (1 - self.lane_width_certainty) * speed_lane_width
+  def set_policy(self, model_data):
+    ep = min(model_data.meta.engagedProb, 0.8) / 0.8
+    self.pose.cfactor = interp(ep, [0, 0.5, 1], [_METRIC_THRESHOLD_STRICT, _METRIC_THRESHOLD, _METRIC_THRESHOLD_SLACK])/_METRIC_THRESHOLD
+    self.blink.cfactor = interp(ep, [0, 0.5, 1], [_BLINK_THRESHOLD_STRICT, _BLINK_THRESHOLD, _BLINK_THRESHOLD_SLACK])/_BLINK_THRESHOLD
 
-    clipped_lane_width = min(4.0, self.lane_width)
-    path_from_left_lane = self.l_poly.copy()
-    path_from_left_lane[3] -= clipped_lane_width / 2.0
-    path_from_right_lane = self.r_poly.copy()
-    path_from_right_lane[3] += clipped_lane_width / 2.0
+  def get_pose(self, driver_state, cal_rpy, car_speed, op_engaged):
+    # 10 Hz
+    if len(driver_state.faceOrientation) == 0 or len(driver_state.facePosition) == 0 or len(driver_state.faceOrientationStd) == 0 or len(driver_state.facePositionStd) == 0:
+      return
 
-    lr_prob = l_prob + r_prob - l_prob * r_prob
+    self.pose.roll, self.pose.pitch, self.pose.yaw = face_orientation_from_net(driver_state.faceOrientation, driver_state.facePosition, cal_rpy, self.is_rhd_region)
+    self.pose.pitch_std = driver_state.faceOrientationStd[0]
+    self.pose.yaw_std = driver_state.faceOrientationStd[1]
+    # self.pose.roll_std = driver_state.faceOrientationStd[2]
+    model_std_max = max(self.pose.pitch_std, self.pose.yaw_std)
+    self.pose.low_std = model_std_max < _POSESTD_THRESHOLD
+    self.blink.left_blink = driver_state.leftBlinkProb * (driver_state.leftEyeProb > _EYE_THRESHOLD) * (driver_state.sgProb < _SG_THRESHOLD)
+    self.blink.right_blink = driver_state.rightBlinkProb * (driver_state.rightEyeProb > _EYE_THRESHOLD) * (driver_state.sgProb < _SG_THRESHOLD)
+    self.face_detected = driver_state.faceProb > _FACE_THRESHOLD and \
+                          abs(driver_state.facePosition[0]) <= 0.4 and abs(driver_state.facePosition[1]) <= 0.45
 
-    d_poly_lane = (l_prob * path_from_left_lane + r_prob * path_from_right_lane) / (l_prob + r_prob + 0.0001)
-    self.d_poly = lr_prob * d_poly_lane + (1.0 - lr_prob) * self.p_poly.copy()
+    self.driver_distracted = self._is_driver_distracted(self.pose, self.blink) > 0
+    # first order filters
+    self.driver_distraction_filter.update(self.driver_distracted)
+
+    # update offseter
+    # only update when driver is actively driving the car above a certain speed
+    if self.face_detected and car_speed > _POSE_CALIB_MIN_SPEED and self.pose.low_std and (not op_engaged or not self.driver_distracted):
+      self.pose.pitch_offseter.push_and_update(self.pose.pitch)
+      self.pose.yaw_offseter.push_and_update(self.pose.yaw)
+
+    self.pose_calibrated = self.pose.pitch_offseter.filtered_stat.n > _POSE_OFFSET_MIN_COUNT and \
+                            self.pose.yaw_offseter.filtered_stat.n > _POSE_OFFSET_MIN_COUNT
+
+    is_model_uncertain = self.hi_stds * DT_DMON > _HI_STD_FALLBACK_TIME
+    self._set_timers(self.face_detected and not is_model_uncertain)
+    if self.face_detected and not self.pose.low_std:
+      if not is_model_uncertain:
+        self.step_change *= min(1.0, max(0.6, 1.6*(model_std_max-0.5)*(model_std_max-2)))
+      self.hi_stds += 1
+    elif self.face_detected and self.pose.low_std:
+      self.hi_stds = 0
+
+  def update(self, events, driver_engaged, ctrl_active, standstill):
+    if (driver_engaged and self.awareness > 0) or not ctrl_active:
+      # reset only when on disengagement if red reached
+      self.awareness = 1.
+      self.awareness_active = 1.
+      self.awareness_passive = 1.
+      return
+
+    driver_attentive = self.driver_distraction_filter.x < 0.37
+    awareness_prev = self.awareness
+
+    if self.face_detected and self.hi_stds * DT_DMON > _HI_STD_TIMEOUT and self.hi_std_alert_enabled:
+      events.add(EventName.driverMonitorLowAcc)
+      self.hi_std_alert_enabled = False # only showed once until orange prompt resets it
+
+    if (driver_attentive and self.face_detected and self.pose.low_std and self.awareness > 0):
+      # only restore awareness when paying attention and alert is not red
+      self.awareness = min(self.awareness + ((_RECOVERY_FACTOR_MAX-_RECOVERY_FACTOR_MIN)*(1.-self.awareness)+_RECOVERY_FACTOR_MIN)*self.step_change, 1.)
+      if self.awareness == 1.:
+        self.awareness_passive = min(self.awareness_passive + self.step_change, 1.)
+      # don't display alert banner when awareness is recovering and has cleared orange
+      if self.awareness > self.threshold_prompt:
+        return
+
+    # should always be counting if distracted unless at standstill and reaching orange
+    if (not (self.face_detected and self.hi_stds * DT_DMON <= _HI_STD_FALLBACK_TIME) or (self.driver_distraction_filter.x > 0.63 and self.driver_distracted and self.face_detected)) and \
+       not (standstill and self.awareness - self.step_change <= self.threshold_prompt):
+      self.awareness = max(self.awareness - self.step_change, -0.1)
+
+    alert = None
+    if self.awareness <= 0.:
+      # terminal red alert: disengagement required
+      alert = EventName.driverDistracted if self.active_monitoring_mode else EventName.driverUnresponsive
+      self.hi_std_alert_enabled = True
+      self.terminal_time += 1
+      if awareness_prev > 0.:
+        self.terminal_alert_cnt += 1
+    elif self.awareness <= self.threshold_prompt:
+      # prompt orange alert
+      alert = EventName.promptDriverDistracted if self.active_monitoring_mode else EventName.promptDriverUnresponsive
+    elif self.awareness <= self.threshold_pre:
+      # pre green alert
+      alert = EventName.preDriverDistracted if self.active_monitoring_mode else EventName.preDriverUnresponsive
+
+    if alert is not None:
+      events.add(alert)
