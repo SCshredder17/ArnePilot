@@ -35,16 +35,16 @@ class LatControlINDI():
     self.enforce_rate_limit = CP.carName == "toyota"
 
     self.RC = interp(0, CP.lateralTuning.indi.timeConstantBP, CP.lateralTuning.indi.timeConstantV)
-    self.G = CP.lateralTuning.indi.actuatorEffectiveness
+    self.G = interp(0, CP.lateralTuning.indi.actuatorEffectivenessBP, CP.lateralTuning.indi.actuatorEffectivenessV)
     self.outer_loop_gain = interp(0, CP.lateralTuning.indi.outerLoopGainBP, CP.lateralTuning.indi.outerLoopGainV)
-    self.inner_loop_gain = CP.lateralTuning.indi.innerLoopGain
+    self.inner_loop_gain = interp(0, CP.lateralTuning.indi.innerLoopGainBP, CP.lateralTuning.indi.innerLoopGainV)
     self.alpha = 1. - DT_CTRL / (self.RC + DT_CTRL)
 
     self.sat_count_rate = 1.0 * DT_CTRL
     self.sat_limit = CP.steerLimitTimer
 
     self.reset()
-
+    
   def reset(self):
     self.delayed_output = 0.
     self.output_steer = 0.
