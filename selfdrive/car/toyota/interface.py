@@ -244,12 +244,14 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.68
       ret.steerLimitTimer = 5.0
       ret.lateralTuning.init('indi')
-      ret.lateralTuning.indi.innerLoopGain = 15.0
-      ret.lateralTuning.indi.outerLoopGainBP = [5.5, 20, 21, 25, 26]
-      ret.lateralTuning.indi.outerLoopGainV = [3.75, 4.25, 8.5, 9.5, 14.99]
-      ret.lateralTuning.indi.timeConstantBP = [4.5, 15, 20, 26]
-      ret.lateralTuning.indi.timeConstantV = [2.8, 3.7, 4.0, 4.0]
-      ret.lateralTuning.indi.actuatorEffectiveness = 15.0
+      ret.lateralTuning.indi.innerLoopGainBP = [18, 22, 26]
+      ret.lateralTuning.indi.innerLoopGainV = [5, 10, 15]
+      ret.lateralTuning.indi.outerLoopGainBP = [18, 22, 26]
+      ret.lateralTuning.indi.outerLoopGainV = [4, 9, 14.99]
+      ret.lateralTuning.indi.timeConstantBP = [18, 22, 26]
+      ret.lateralTuning.indi.timeConstantV = [2, 4, 6]
+      ret.lateralTuning.indi.actuatorEffectivenessBP = [18, 22, 26]
+      ret.lateralTuning.indi.actuatorEffectivenessV = [5, 10, 15]
 
     elif candidate in [CAR.LEXUS_ES_TSS2, CAR.LEXUS_ESH_TSS2]:
       stop_and_go = True
