@@ -241,7 +241,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerRatio = 15.33
       tire_stiffness_factor = 0.996  # not optimized yet
       ret.mass = 3060. * CV.LB_TO_KG + STD_CARGO_KG
-      ret.steerActuatorDelay = 0.68
+      ret.steerActuatorDelay = 0.6
       ret.steerLimitTimer = 5.0
       ret.lateralTuning.init('indi')
       ret.lateralTuning.indi.innerLoopGainBP = [18, 22, 26]
@@ -249,7 +249,7 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.indi.outerLoopGainBP = [18, 22, 26]
       ret.lateralTuning.indi.outerLoopGainV = [4, 9, 14.99]
       ret.lateralTuning.indi.timeConstantBP = [18, 22, 26]
-      ret.lateralTuning.indi.timeConstantV = [2, 4, 6]
+      ret.lateralTuning.indi.timeConstantV = [2, 4, 5.5]
       ret.lateralTuning.indi.actuatorEffectivenessBP = [18, 22, 26]
       ret.lateralTuning.indi.actuatorEffectivenessV = [5, 10, 15]
 
