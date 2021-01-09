@@ -107,7 +107,7 @@ class opParams:
                         'smart_speed_max_vego': Param(26.8, VT.number, 'Speed limit to ignore Smartspeed in m/s'),
                         #'spairrowtuning': Param(False, bool, 'INDI Tuning for Corolla Tss2, set steer_up_15 param to True and flash panda'),
                         'speed_offset': Param(0, VT.number, 'Speed limit offset in m/s', live=True),
-                        'steer_actuator_delay': Param(0.5, VT.number, 'The steer actuator delay', live=True),
+                        'steer_actuator_delay': Param(0.45, VT.number, 'The steer actuator delay', live=True),
                         #'steer_up_15': Param(False, bool, 'Increase rate of steering up to 15, may fault on some cars'),
                         #'traffic_light_alerts': Param(False, bool, "Switch off the traffic light alerts"),
                         'traffic_lights': Param(False, bool, "Should Openpilot stop for traffic lights"),
@@ -123,10 +123,10 @@ class opParams:
                         'indi_outer_gain_bp': Param([18, 22, 26], [list, float, int], live=True, depends_on='enable_indi_live'),
                         'indi_outer_gain_v': Param([4, 9, 14.99], [list, float, int], live=True, depends_on='enable_indi_live'),
                         'indi_time_constant_bp': Param([18, 22, 26], [list, float, int], live=True, depends_on='enable_indi_live'),
-                        'indi_time_constant_v': Param([3, 3, 3], [list, float, int], live=True, depends_on='enable_indi_live'),
+                        'indi_time_constant_v': Param([0.2, 0.2, 0.2], [list, float, int], live=True, depends_on='enable_indi_live'),
                         'indi_actuator_effectiveness_bp': Param([18, 22, 26], [list, float, int], live=True, depends_on='enable_indi_live'),
                         'indi_actuator_effectiveness_v': Param([5, 10, 15], [list, float, int], live=True, depends_on='enable_indi_live'),
-                        'steer_limit_timer': Param(0.4, VT.number, live=True, depends_on='enable_indi_live')
+                        'steer_limit_timer': Param(5.0, VT.number, live=True, depends_on='enable_indi_live')
                        }
 
     self._params_file = '/data/op_params.json'
