@@ -10,6 +10,7 @@ from common.params import Params
 import cereal.messaging as messaging
 from cereal import log
 from common.op_params import opParams
+from common.numpy_fast import interp
 
 LaneChangeState = log.PathPlan.LaneChangeState
 LaneChangeDirection = log.PathPlan.LaneChangeDirection
