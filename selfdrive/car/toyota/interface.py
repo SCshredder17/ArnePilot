@@ -36,7 +36,8 @@ class CarInterface(CarInterfaceBase):
     ret.carName = "toyota"
     ret.safetyModel = car.CarParams.SafetyModel.toyota
 
-    ret.steerActuatorDelay = 0.12  # Default delay, Prius has larger delay
+    ret.steerActuatorDelayBP = [13.4, 14]  # Default delay, Prius has larger delay
+    ret.steerActuatorDelayV = [0.36, 0.55]
     ret.steerLimitTimer = 0.4
 
     if candidate not in [CAR.PRIUS, CAR.RAV4, CAR.RAV4H, CAR.PRIUS_TSS2]:  # These cars use LQR/INDI
