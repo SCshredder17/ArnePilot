@@ -217,8 +217,8 @@ class PathPlanner():
     self.cur_state = calc_states_after_delay(self.cur_state, v_ego, angle_steers - angle_offset, curvature_factor, VM.sR, self.op_params.get('steer_actuator_delay'))
 
     @property
-    def steer_actuator_delay(self):
-      return interp(self.v_ego, self.CP.steeractuatordelayBP, self.CP.steeractuatordelayV)
+    def steer_Actuator_Delay(self):
+      return interp(self.v_ego, self.CP.steerActuatorDelayBP, self.CP.steerActuatorDelayV)
 
     v_ego_mpc = max(v_ego, 5.0)  # avoid mpc roughness due to low speed
     self.libmpc.run_mpc(self.cur_state, self.mpc_solution,
