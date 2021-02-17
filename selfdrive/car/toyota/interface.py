@@ -291,7 +291,10 @@ class CarInterface(CarInterfaceBase):
       ret.mass = 3060. * CV.LB_TO_KG + STD_CARGO_KG
       ret.steerActuatorDelay = 0.55
       ret.steerLimitTimer = 5.0
-      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.225], [0.01]]
+      ret.lateralTuning.pid.kiBP = [13.4, 14.0]
+      ret.lateralTuning.pid.kiBP = [13.4, 14.0]
+      ret.lateralTuning.pid.kpV = [0.014, 0.028]
+      ret.lateralTuning.pid.kiV = [0.0006, 0.0012]
       ret.lateralTuning.pid.kf = 0.0001732615365632912  # hardcoded in latcontrol_pid, this does nothing for now
 
     elif candidate in [CAR.LEXUS_ES_TSS2, CAR.LEXUS_ESH_TSS2]:
