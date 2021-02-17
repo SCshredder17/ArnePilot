@@ -421,7 +421,7 @@ struct CarParams {
   stoppingBrakeRate @52 :Float32; # brake_travel/s while trying to stop
   startingBrakeRate @53 :Float32; # brake_travel/s while releasing on restart
 
-  steerActuatorDelay @36 :Float32; # Steering wheel actuator delay in seconds
+  steerActuatorDelayBP @36 :Float32; # Steering wheel actuator delay in seconds
   openpilotLongitudinalControl @37 :Bool; # is openpilot doing the longitudinal control?
   carVin @38 :Text; # VIN number queried during fingerprinting
   isPandaBlack @39: Bool;
@@ -432,6 +432,7 @@ struct CarParams {
   communityFeature @46: Bool;  # true if a community maintained feature is detected
   fingerprintSource @49: FingerprintSource;
   networkLocation @50 :NetworkLocation;  # Where Panda/C2 is integrated into the car's CAN network
+  steerActuatorDelayV @51 :Float32; 
 
   struct LateralParams {
     torqueBP @0 :List(Int32);
