@@ -6,7 +6,7 @@ from cereal import log
 
 class LatControlPID():
   def __init__(self, CP):
-    corolla_tss2_new_kf = 0.0001732615365632912
+    corolla_tss2_new_kf = 0.000153263811757641
     self.pid = PIController((CP.lateralTuning.pid.kpBP, CP.lateralTuning.pid.kpV),
                             (CP.lateralTuning.pid.kiBP, CP.lateralTuning.pid.kiV),
                             k_f=corolla_tss2_new_kf, pos_limit=1.0, neg_limit=-1.0,
