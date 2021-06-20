@@ -180,7 +180,7 @@ def get_car(logcan, sendcan):
 
   if candidate is None:
     cloudlog.warning("car doesn't match any fingerprints: %r", fingerprints)
-    candidate = "mock"
+    candidate = "TOYOTA COROLLA TSS2 2019"
 
   try:
     CarInterface, CarController, CarState = interfaces[candidate]
