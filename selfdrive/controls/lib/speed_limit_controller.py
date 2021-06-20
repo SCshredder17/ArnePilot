@@ -23,8 +23,8 @@ _LIMIT_ADAPT_TIME_PER_MS = 1.  # Ideal adapt time(s) to lower speed limit. i.e. 
 _MAX_MAP_DATA_AGE = 10.0  # s Maximum time to hold to map data, then consider it invalid.
 
 # Lookup table for speed limit percent offset depending on speed.
-_LIMIT_PERC_OFFSET_V = [0.316, 0.19, 0.118, 0.105, 0.095, 0.215]
-_LIMIT_PERC_OFFSET_BP = [6.7, 11.18, 17.88, 20.12, 22.35, 29.06
+_LIMIT_PERC_OFFSET_V = [0.316, 0.19, 0.133, 0.118, 0.105, 0.095, 0.455, 0.24, 0.21]
+_LIMIT_PERC_OFFSET_BP = [6.7, 11.18, 15.8, 17.88, 20.12, 22.35, 24.58, 26.8, 31.29]
 
 #_LIMIT_PERC_OFFSET_V = [0.28, 0.038]  # 55, 105, 135 km/h 96, 129
 #_LIMIT_PERC_OFFSET_BP = [13.9, 36.1]  # 50, 100, 130 km/h
