@@ -333,7 +333,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerRatio = 15.33
       tire_stiffness_factor = 0.996  # not optimized yet
       ret.mass = 3060. * CV.LB_TO_KG + STD_CARGO_KG
-      ret.steerActuatorDelay = 0.52
+      ret.steerActuatorDelay = 0.48
       ret.steerLimitTimer = 5.0
       if spairrowtuning:
         ret.lateralTuning.init('indi')
@@ -349,7 +349,7 @@ class CarInterface(CarInterfaceBase):
       else:
         ret.lateralTuning.pid.kpBP = [0.0]
         ret.lateralTuning.pid.kiBP = [0.0]
-        ret.lateralTuning.pid.kpV = [0.036]
+        ret.lateralTuning.pid.kpV = [0.028]
         ret.lateralTuning.pid.kiV = [0.0012]
         ret.lateralTuning.pid.kf = 0.000153263811757641
         ret.lateralTuning.pid.newKfTuned = True
